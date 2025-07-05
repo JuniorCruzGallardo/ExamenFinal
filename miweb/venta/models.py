@@ -91,8 +91,8 @@ class Proveedor(models.Model):
     direccion = models.TextField(blank=True, null=True)
     telefono = models.CharField(max_length=15, blank=True, null=True)
     email = models.EmailField(max_length=100, blank=True, null=True)
-    fec_reg = models.DateField()  # fecha registrada manualmente
-    fec_sis = models.DateTimeField(auto_now=True)  # fecha-hora del sistema
+    fec_reg = models.DateField()
+    fec_sis = models.DateTimeField(auto_now=True)  
 
 
     def __str__(self):
@@ -124,14 +124,12 @@ class Venta(models.Model):
             venta_anterior = None
 
         if venta_anterior:
-            # Si el producto no ha cambiado
             if venta_anterior.cod_producto_id == self.cod_producto_id:
                 diferencia = self.cantidad - venta_anterior.cantidad
                 if self.cod_producto.stock < diferencia:
                     raise ValidationError(f"Stock insuficiente para actualizar. Disponible: {self.cod_producto.stock}")
                 self.cod_producto.stock -= diferencia
             else:
-                # Si cambió de producto
                 producto_anterior = venta_anterior.cod_producto
                 producto_anterior.stock += venta_anterior.cantidad
                 producto_anterior.save()
@@ -140,7 +138,6 @@ class Venta(models.Model):
                     raise ValidationError(f"Stock insuficiente para el nuevo producto. Disponible: {self.cod_producto.stock}")
                 self.cod_producto.stock -= self.cantidad
         else:
-            # NUEVA venta
             if self.cod_producto.stock < self.cantidad:
                 raise ValidationError(f"Stock insuficiente. Disponible: {self.cod_producto.stock}")
             self.cod_producto.stock -= self.cantidad
@@ -154,7 +151,6 @@ class Venta(models.Model):
 
 
     def delete(self, *args, **kwargs):
-        # OJOOOOO, Al eliminar, devolvemos el stock del producto
         self.cod_producto.stock += self.cantidad
         self.cod_producto.save()
         super().delete(*args, **kwargs)
