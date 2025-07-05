@@ -3,9 +3,87 @@ from django.shortcuts import render
 from .models import Cliente
 from .models import Producto
 from .forms import ProductoCreateForm
+from .models import Proveedor
+from .forms import ProveedorCreateForm, ProveedorUpdateForm
+from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib.auth import authenticate, login, logout
 
+#=============================================
+
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib import messages
+from .models import Venta
+from .forms import VentaCreateForm, VentaUpdateForm
+
+
+
+def user_login(request):
+    #Si ya esta autentica enviar a home
+    if request.user.is_authenticated:
+        return redirect('home')
+    # Si no lo esta pedir usuario y clave
+    if request.method =='POST':
+        username = request.POST.get('username')
+        password = request.POST.get('password')
+
+        if username and password:
+            user =authenticate(request, username = username, password=password)
+            if user is not None:
+                login(request, user)
+                return redirect('home')
+            else:
+                messages.error(request,'Error de usuario o clave')
+        else:
+            messages.error(request,'Ingrese sus datos')
+    return render(request,'venta/login.html')
+
+
+
+#Vista Principal del sistema
+@login_required
+def home(request):
+    #Obtener los permisos
+    user_permissions={
+        'can_manage_clients':(
+            request.user.is_superuser or
+            request.user.groups.filter(name='grp_cliente').exists() or
+            request.user.has_perm('venta.add_cliente')
+        ),
+        'can_manage_products':(
+            request.user.is_superuser or
+            request.user.groups.filter(name='grp_producto').exists()
+        ),
+        'can_manage_providers':(
+            request.user.is_superuser or
+            request.user.groups.filter(name='grp_proveedor').exists()
+        ),
+        'is_admin':request.user.is_superuser
+
+    }
+    context = {
+        'user_permissions': user_permissions,
+        'user': request.user
+    }
+
+    return render(request, 'venta/home.html', context)
+
+#Implementar el logout
+
+def user_logout(request):
+    logout(request)
+    messages.success(request, 'sesion cerrada corectamente')
+    return redirect('login')
+
+from django.http import HttpResponseForbidden
+@login_required
+@permission_required('venta.view_cliente', raise_exception=True)
 # consulta_clientes es la vista que muestra la lista
 def consulta_clientes(request):
+    if not(request.user.is_superuser or
+           request.user.group.filter(name='grp_cliente').exists() or
+           request.user.has_perm('venta.view_cliente')
+           ):
+        return HttpResponseForbidden('No tienes permisos para ingressar aqui')
     # Se requiere obtner los datos a gestionar
     #clientes = Cliente.objects.all().order_by('ape_nom') # la data es la que se requiera 
     clientes = Cliente.objects.all().order_by('id_cliente') # la data es la que se requiera 
@@ -17,13 +95,24 @@ def consulta_clientes(request):
         'mensaje'  : 'Hola'
     }
     # Se devolverá el enlace entre la plantilla y el contexto
-    return render(request, 'venta\lista_clientes.html', context)
+    return render(request, 'venta/lista_clientes.html', context)
+
 
 from .forms import ClienteCreateForm, ClienteUpdateForm
 from django.contrib import messages
 from django.shortcuts import redirect
 
+
+@login_required
+@permission_required('venta.add_cliente', raise_exception=True)
+
 def crear_cliente(request):
+    #Verificar permisos
+    if not(request.user.is_superuser or
+           request.user.groups.filter(name='grp_cliente').exists() or
+           request.user.has_perm('venta.add_cliente')
+           ):
+        return HttpResponseForbidden('No tiene permisos para crear clientes')
     dni_duplicado = False
 
     if request.method == 'POST':
@@ -52,7 +141,19 @@ def crear_cliente(request):
     }
     return render(request, 'venta/crear_cliente.html', context)    
 
+
+
+from django.http import HttpResponseForbidden
+@login_required
+@permission_required('venta.change_cliente', raise_exception=True)
 def actualizar_cliente(request):
+    if not (
+        request.user.is_superuser or
+        request.user.groups.filter(name='grp_cliente').exists() or
+        request.user.has_perm('venta.change_cliente')
+    ):
+        return HttpResponseForbidden('No tiene permisos para actualizar cliente')
+
     cliente = None
     dni_buscado = None
     form = None
@@ -62,72 +163,79 @@ def actualizar_cliente(request):
             # Buscar el cliente por DNI
             dni_buscado = request.POST.get('dni_busqueda')
             if dni_buscado:
-                try: # intentar considerar la busqueda del cliente
-                    # Obtener un objeto del tipo cliente
+                try:
                     cliente = Cliente.objects.get(id_cliente=dni_buscado)
-                    # Crear un formulario con los datos del objeto cliente
                     form = ClienteUpdateForm(instance=cliente)
                     messages.success(request, f'Cliente con DNI {dni_buscado} encontrado')
-                except Cliente.DoesNotExist: # execepcion de dato no existente
-                    messages.error(request, 'No se encontró Cliente con ese DNI')    
+                except Cliente.DoesNotExist:
+                    messages.error(request, 'No se encontró Cliente con ese DNI')
             else:
-                messages.error(request, 'Por favor ingrese el DNI para buscar') 
+                messages.error(request, 'Por favor ingrese el DNI para buscar')
+
         elif 'guardar' in request.POST:
             dni_buscado = request.POST.get('dni_busqueda') or request.POST.get('id_cliente')
             if dni_buscado:
                 try:
-                    cliente = Cliente.objects.get(id_cliente = dni_buscado)
+                    cliente = Cliente.objects.get(id_cliente=dni_buscado)
                     form = ClienteUpdateForm(request.POST, instance=cliente)
                     if form.is_valid():
                         form.save()
                         messages.success(request, 'Cliente actualizado correctamente')
-                        # formulario con datos actualizados
                         cliente.refresh_from_db()
-                        # devolver al formulario
                         form = ClienteUpdateForm(instance=cliente)
                     else:
                         messages.error(request, 'Error en los datos del formulario')
                 except Cliente.DoesNotExist:
                     messages.error(request, 'Cliente no encontrado')
-                    
-
             else:
-                messages.error(request, 'No se puede identificar al cliente para actaualizar')
+                messages.error(request, 'No se puede identificar al cliente para actualizar')
+
     context = {
-        'form':form,
+        'form': form,
         'dni_buscado': dni_buscado,
         'cliente_encontrado': cliente is not None,
-        'cliente':cliente
+        'cliente': cliente
     }
-    return render(request,'venta/u_cliente.html', context)
+    return render(request, 'venta/u_cliente.html', context)
                      
 # Eliminar clientes
+from django.contrib.auth.decorators import login_required, permission_required
+from django.http import HttpResponseForbidden
+
+@login_required
+@permission_required('venta.delete_producto', raise_exception=True)
 def borrar_producto(request):
+    
+    # Verificar permisos personalizados
+    if not (
+        request.user.is_superuser or
+        request.user.groups.filter(name='grp_producto').exists() or
+        request.user.has_perm('venta.delete_producto')
+    ):
+        return HttpResponseForbidden('No tiene permisos para eliminar productos')
+
     productos_encontrados = []
     tipo_busqueda = 'id'
-    termino_busqueda = '' # pa dentro de las cajas
+    termino_busqueda = ''  # pa dentro de las cajas
     total_registros = 0
 
     if request.method == 'POST':
-        #
         if 'consultar' in request.POST:
             # Realizar la búsqueda
             tipo_busqueda = request.POST.get('tipo_busqueda', 'id')
-            termino_busqueda = request.POST.get('termino_busqueda','').strip()
+            termino_busqueda = request.POST.get('termino_busqueda', '').strip()
 
             if termino_busqueda:
-                # procesar
                 if tipo_busqueda == 'id':
                     try:
-                        producto = Producto.objects.get(id_producto = termino_busqueda)
+                        producto = Producto.objects.get(id_producto=termino_busqueda)
                         productos_encontrados = [producto]
                     except Producto.DoesNotExist:
-                        messages.error(request, 'No se encontró producto con ese id')    
-
+                        messages.error(request, 'No se encontró producto con ese id')
                 elif tipo_busqueda == 'nombre':
                     productos_encontrados = Producto.objects.filter(
-                        nom_prod__icontains = termino_busqueda # obtener las coincidencias
-                    ).order_by('id_producto') # debe estar ordenado
+                        nom_prod__icontains=termino_busqueda
+                    ).order_by('id_producto')
 
                     if not productos_encontrados:
                         messages.error(request, 'No se encontraron productos con ese nombre')
@@ -135,65 +243,59 @@ def borrar_producto(request):
                 total_registros = len(productos_encontrados)
 
                 if total_registros > 0:
-                    messages.success(request, f'Se encontraron {total_registros} registro(s)')        
-
+                    messages.success(request, f'Se encontraron {total_registros} registro(s)')
             else:
-                messages.error(request, 'Ingrese un término de búsqueda')    
+                messages.error(request, 'Ingrese un término de búsqueda')
 
         elif 'eliminar' in request.POST:
-            # Eliminar cliente
             id_eliminar = request.POST.get('id_eliminar')
 
             if id_eliminar:
                 try:
-                    # buscar al cliente a eliminar
-                    producto = Producto.objects.get(id_producto = id_eliminar)
+                    producto = Producto.objects.get(id_producto=id_eliminar)
                     producto.delete()
-                    messages.success(request, f'producto con id {id_eliminar} eliminado correctamente')
+                    messages.success(request, f'Producto con ID {id_eliminar} eliminado correctamente')
 
-                    # Volver a hacer la búsqueda para actualizar la lista
+                    # Actualizar lista tras eliminación
                     tipo_busqueda = request.POST.get('tipo_busqueda_actual', 'id')
-                    termino_busqueda = request.POST.get('termino_busqueda_actual','')
+                    termino_busqueda = request.POST.get('termino_busqueda_actual', '')
 
                     if termino_busqueda:
                         if tipo_busqueda == 'id':
-                            # Para DNI, no mostrar nada porque ya se eliminó
                             productos_encontrados = []
                         elif tipo_busqueda == 'nombre':
-                            # En este caso hay que buscar nuevamente lo que queda
                             productos_encontrados = Producto.objects.filter(
-                                nom_prod__icontains = termino_busqueda
+                                nom_prod__icontains=termino_busqueda
                             ).order_by('id_producto')
 
                         total_registros = len(productos_encontrados)
-                
-
                 except Producto.DoesNotExist:
-                    messages.error(request, 'producto no encontrado')
-    
+                    messages.error(request, 'Producto no encontrado')
+
     context = {
-        'productos_encontrados' : productos_encontrados,
-        'tipo_busqueda' : tipo_busqueda,
-        'termino_busqueda' : termino_busqueda,
-        'total_registros' : total_registros
+        'productos_encontrados': productos_encontrados,
+        'tipo_busqueda': tipo_busqueda,
+        'termino_busqueda': termino_busqueda,
+        'total_registros': total_registros
     }
 
     return render(request, 'venta/borrar_producto.html', context)
 
 
 def consulta_productos(request):
-    # Se requiere obtnr los datos a gestionar
-    #clientes = Cliente.objects.all().order_by('ape_nom')#Data que se la que se requira
-    productos = Producto.objects.all().order_by('id_producto')#Data que se la que se requira
-    
+    # Se requiere obtener los datos a gestionar
+    productos = Producto.objects.all().order_by('id_producto')  # La data es la que se requiera
+
     # Estos datos deben estar disponibles para una plantilla (Template)
     # Se crea un diccionario llamado context (será accesible desde la plantilla)
-    context = {# en el template será objeto valor
-        'productos' : productos,
-        'titulo' : 'Lista de Productos'
+    context = {  # en el template será objetos y valores
+        'productos': productos,
+        'titulo': 'Lista de Productos',
+        'mensaje': 'Consulta de productos'
     }
+
     # Se devolverá el enlace entre la plantilla y el contexto
-    return render(request, 'venta\lista_productos.html', context)
+    return render(request, 'venta/lista_productos.html', context)
 
 
 
@@ -287,3 +389,247 @@ def borrar_cliente(request):
     }
 
     return render(request, 'venta/borrar_cliente.html', context)
+
+
+from .forms import ProductoUpdateForm  # Asegúrate de haber creado esta clase en forms.py
+
+def actualizar_producto(request):
+    producto = None
+    id_buscado = None
+    form = None
+
+    if request.method == 'POST':
+        if 'buscar' in request.POST:
+            id_buscado = request.POST.get('id_busqueda')
+            if id_buscado:
+                try:
+                    producto = Producto.objects.get(id_producto=id_buscado)
+                    form = ProductoUpdateForm(instance=producto)
+                    messages.success(request, f'Producto con ID {id_buscado} encontrado')
+                except Producto.DoesNotExist:
+                    messages.error(request, 'No se encontró producto con ese ID')
+            else:
+                messages.error(request, 'Ingrese el ID del producto para buscar')
+        
+        elif 'guardar' in request.POST:
+            id_buscado = request.POST.get('id_busqueda') or request.POST.get('id_producto')
+            if id_buscado:
+                try:
+                    producto = Producto.objects.get(id_producto=id_buscado)
+                    form = ProductoUpdateForm(request.POST, instance=producto)
+                    if form.is_valid():
+                        form.save()
+                        messages.success(request, 'Producto actualizado correctamente')
+                        producto.refresh_from_db()
+                        form = ProductoUpdateForm(instance=producto)
+                    else:
+                        messages.error(request, 'Error en los datos del formulario')
+                except Producto.DoesNotExist:
+                    messages.error(request, 'Producto no encontrado')
+            else:
+                messages.error(request, 'No se puede identificar el producto para actualizar')
+
+    context = {
+        'form': form,
+        'id_buscado': id_buscado,
+        'producto_encontrado': producto is not None,
+        'producto': producto
+    }
+    return render(request, 'venta/u_producto.html', context)
+
+#Consulta proveedores
+@login_required
+@permission_required('venta.view_proveedor', raise_exception=True)
+def consulta_proveedores(request):
+    proveedores = Proveedor.objects.all().order_by('id_proveedor')
+    context = {
+        'proveedores': proveedores,
+        'titulo': 'Lista de Proveedores',
+        'mensaje': 'Consulta de proveedores'
+    }
+    return render(request, 'venta/lista_proveedores.html', context)
+
+#Crear proveedor
+def crear_proveedor(request):
+    if request.method == 'POST':
+        form = ProveedorCreateForm(request.POST)
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'Proveedor registrado correctamente')
+            return redirect('crear_proveedor')
+    else:
+        form = ProveedorCreateForm()
+
+    return render(request, 'venta/crear_proveedor.html', {'form': form})
+
+#Actualizar proveedor
+def actualizar_proveedor(request):
+    proveedor = None
+    id_buscado = None
+    form = None
+
+    if request.method == 'POST':
+        if 'buscar' in request.POST:
+            id_buscado = request.POST.get('id_busqueda')
+            if id_buscado:
+                try:
+                    proveedor = Proveedor.objects.get(id_proveedor=id_buscado)
+                    form = ProveedorUpdateForm(instance=proveedor)
+                    messages.success(request, f'Proveedor con ID {id_buscado} encontrado')
+                except Proveedor.DoesNotExist:
+                    messages.error(request, 'No se encontró proveedor con ese ID')
+            else:
+                messages.error(request, 'Ingrese el ID del proveedor para buscar')
+        
+        elif 'guardar' in request.POST:
+            id_buscado = request.POST.get('id_busqueda') or request.POST.get('id_proveedor')
+            if id_buscado:
+                try:
+                    proveedor = Proveedor.objects.get(id_proveedor=id_buscado)
+                    form = ProveedorUpdateForm(request.POST, instance=proveedor)
+                    if form.is_valid():
+                        form.save()
+                        messages.success(request, 'Proveedor actualizado correctamente')
+                        proveedor.refresh_from_db()
+                        form = ProveedorUpdateForm(instance=proveedor)
+                    else:
+                        messages.error(request, 'Error en los datos del formulario')
+                except Proveedor.DoesNotExist:
+                    messages.error(request, 'Proveedor no encontrado')
+            else:
+                messages.error(request, 'No se puede identificar el proveedor para actualizar')
+
+    context = {
+        'form': form,
+        'id_buscado': id_buscado,
+        'proveedor_encontrado': proveedor is not None,
+        'proveedor': proveedor
+    }
+    return render(request, 'venta/u_proveedor.html', context)
+
+#Eliminar o borrar proveedor
+
+def borrar_proveedor(request):
+    proveedores_encontrados = []
+    tipo_busqueda = 'id'
+    termino_busqueda = ''
+    total_registros = 0
+
+    if request.method == 'POST':
+        if 'consultar' in request.POST:
+            tipo_busqueda = request.POST.get('tipo_busqueda', 'id')
+            termino_busqueda = request.POST.get('termino_busqueda','').strip()
+
+            if termino_busqueda:
+                if tipo_busqueda == 'id':
+                    try:
+                        proveedor = Proveedor.objects.get(id_proveedor=termino_busqueda)
+                        proveedores_encontrados = [proveedor]
+                    except Proveedor.DoesNotExist:
+                        messages.error(request, 'No se encontró proveedor con ese ID')
+                elif tipo_busqueda == 'nombre':
+                    proveedores_encontrados = Proveedor.objects.filter(
+                        nom_proveedor__icontains=termino_busqueda
+                    ).order_by('id_proveedor')
+
+                    if not proveedores_encontrados:
+                        messages.error(request, 'No se encontraron proveedores con ese nombre')
+
+                total_registros = len(proveedores_encontrados)
+                if total_registros > 0:
+                    messages.success(request, f'Se encontraron {total_registros} registro(s)')
+            else:
+                messages.error(request, 'Ingrese un término de búsqueda')
+
+        elif 'eliminar' in request.POST:
+            id_eliminar = request.POST.get('id_eliminar')
+            if id_eliminar:
+                try:
+                    proveedor = Proveedor.objects.get(id_proveedor=id_eliminar)
+                    proveedor.delete()
+                    messages.success(request, f'Proveedor con ID {id_eliminar} eliminado correctamente')
+
+                    tipo_busqueda = request.POST.get('tipo_busqueda_actual', 'id')
+                    termino_busqueda = request.POST.get('termino_busqueda_actual', '')
+
+                    if termino_busqueda:
+                        if tipo_busqueda == 'id':
+                            proveedores_encontrados = []
+                        elif tipo_busqueda == 'nombre':
+                            proveedores_encontrados = Proveedor.objects.filter(
+                                nom_proveedor__icontains=termino_busqueda
+                            ).order_by('id_proveedor')
+
+                        total_registros = len(proveedores_encontrados)
+                except Proveedor.DoesNotExist:
+                    messages.error(request, 'Proveedor no encontrado')
+
+    context = {
+        'proveedores_encontrados': proveedores_encontrados,
+        'tipo_busqueda': tipo_busqueda,
+        'termino_busqueda': termino_busqueda,
+        'total_registros': total_registros
+    }
+
+    return render(request, 'venta/borrar_proveedor.html', context)
+
+
+# Crear una nueva venta
+from django.core.exceptions import ValidationError
+
+@login_required
+@permission_required('venta.add_venta', raise_exception=True)
+def venta_create(request):
+    if request.method == 'POST':
+        form = VentaCreateForm(request.POST)
+        if form.is_valid():
+            try:
+                form.save()
+                messages.success(request, 'Venta registrada correctamente')
+                return redirect('lista_ventas')
+            except ValidationError as e:
+                form.add_error(None, e.message)  # Muestra el mensaje en el formulario
+    else:
+        form = VentaCreateForm()
+
+    return render(request, 'venta/crear_venta.html', {'form': form})
+
+
+
+# Actualizar una venta existente
+@login_required
+@permission_required('venta.change_venta', raise_exception=True)
+def venta_update(request, cod_venta):
+    venta = get_object_or_404(Venta, cod_venta=cod_venta)
+    if request.method == 'POST':
+        form = VentaUpdateForm(request.POST, instance=venta)
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'Venta actualizada correctamente')
+            return redirect('lista_ventas')
+    else:
+        form = VentaUpdateForm(instance=venta)
+
+    return render(request, 'venta/u_venta.html', {'form': form, 'venta': venta})  
+
+
+# Listar ventas
+@login_required
+@permission_required('venta.view_venta', raise_exception=True)
+def venta_list(request):
+    ventas = Venta.objects.all().order_by('-cod_venta')
+    return render(request, 'venta/lista_ventas.html', {'ventas': ventas})  
+
+
+# Eliminar venta (si tienes plantilla)
+@login_required
+@permission_required('venta.delete_venta', raise_exception=True)
+def venta_delete(request, cod_venta):
+    venta = get_object_or_404(Venta, cod_venta=cod_venta)
+
+    if request.method == 'POST':
+        venta.delete()
+        messages.success(request, 'Venta eliminada correctamente.')
+        return redirect('lista_ventas')
+
+    return render(request, 'venta/borrar_venta.html', {'venta': venta})

@@ -57,3 +57,104 @@ class Producto(models.Model):
 
     def __str__(self):
         return f'{self.nom_prod} - S/. {self.precio} (Stock: {self.stock}) | Vence: {self.fec_vencim} | Activo: {"Sí" if self.activo else "No"}'
+    
+
+  
+  
+
+
+from django.core.validators import MinLengthValidator
+
+'''
+  Modelo: Proveedor
+  Tabla: venta_proveedor
+  Atributos:
+    - id_proveedor: texto numérico de 8 caracteres, clave primaria
+    - razon_social: texto, máximo 100 caracteres
+    - ruc: texto de 11 caracteres, único
+    - direccion: texto libre, opcional
+    - telefono: texto hasta 15 caracteres, opcional
+    - email: correo electrónico, opcional
+    - fec_reg: fecha manual de registro (formato aaaa-mm-dd)
+    - fec_sis: fecha y hora del sistema (timestamp)
+'''
+
+class Proveedor(models.Model):
+    id_proveedor = models.CharField(
+        primary_key=True,
+        max_length=8,
+        validators=[MinLengthValidator(1)],
+        error_messages={'max_length': 'Máximo 8 caracteres'}
+    )
+    razon_social = models.CharField(max_length=100)
+    ruc = models.CharField(max_length=11, unique=True)
+    direccion = models.TextField(blank=True, null=True)
+    telefono = models.CharField(max_length=15, blank=True, null=True)
+    email = models.EmailField(max_length=100, blank=True, null=True)
+    fec_reg = models.DateField()  # fecha registrada manualmente
+    fec_sis = models.DateTimeField(auto_now=True)  # fecha-hora del sistema
+
+
+    def __str__(self):
+        return f'ID: {self.id_proveedor} | {self.razon_social} | RUC: {self.ruc}'
+
+
+
+
+
+from django.core.exceptions import ValidationError
+from django.db import models
+
+class Venta(models.Model):
+    cod_venta = models.AutoField(primary_key=True)
+    cod_cliente = models.ForeignKey('Cliente', on_delete=models.CASCADE)
+    cod_producto = models.ForeignKey('Producto', on_delete=models.CASCADE)
+    cantidad = models.PositiveIntegerField()
+    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, editable=False)
+
+    def save(self, *args, **kwargs):
+        from venta.models import Producto
+
+        self.subtotal = self.cantidad * self.precio_unitario
+
+        try:
+            venta_anterior = Venta.objects.get(pk=self.pk)
+        except Venta.DoesNotExist:
+            venta_anterior = None
+
+        if venta_anterior:
+            # Si el producto no ha cambiado
+            if venta_anterior.cod_producto_id == self.cod_producto_id:
+                diferencia = self.cantidad - venta_anterior.cantidad
+                if self.cod_producto.stock < diferencia:
+                    raise ValidationError(f"Stock insuficiente para actualizar. Disponible: {self.cod_producto.stock}")
+                self.cod_producto.stock -= diferencia
+            else:
+                # Si cambió de producto
+                producto_anterior = venta_anterior.cod_producto
+                producto_anterior.stock += venta_anterior.cantidad
+                producto_anterior.save()
+
+                if self.cod_producto.stock < self.cantidad:
+                    raise ValidationError(f"Stock insuficiente para el nuevo producto. Disponible: {self.cod_producto.stock}")
+                self.cod_producto.stock -= self.cantidad
+        else:
+            # NUEVA venta
+            if self.cod_producto.stock < self.cantidad:
+                raise ValidationError(f"Stock insuficiente. Disponible: {self.cod_producto.stock}")
+            self.cod_producto.stock -= self.cantidad
+
+        self.cod_producto.save()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Venta {self.cod_venta} | Cliente: {self.cod_cliente.id_cliente} | Producto: {self.cod_producto.nom_prod}"
+
+
+
+    def delete(self, *args, **kwargs):
+        # OJOOOOO, Al eliminar, devolvemos el stock del producto
+        self.cod_producto.stock += self.cantidad
+        self.cod_producto.save()
+        super().delete(*args, **kwargs)
