@@ -588,7 +588,7 @@ def venta_create(request):
                 messages.success(request, 'Venta registrada correctamente')
                 return redirect('lista_ventas')
             except ValidationError as e:
-                form.add_error(None, e.message)  # Muestra el mensaje en el formulario
+                form.add_error(None, e.message)  
     else:
         form = VentaCreateForm()
 
@@ -621,7 +621,7 @@ def venta_list(request):
     return render(request, 'venta/lista_ventas.html', {'ventas': ventas})  
 
 
-# Eliminar venta (si tienes plantilla)
+# Eliminar venta 
 @login_required
 @permission_required('venta.delete_venta', raise_exception=True)
 def venta_delete(request, cod_venta):
